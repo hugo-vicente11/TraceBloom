@@ -26,7 +26,7 @@ prost = "0.14"
 
 # ClickHouse client (RowBinaryWithNamesAndTypes + HTTP). `time` enables the
 # DateTime64 <-> OffsetDateTime serde helpers.
-clickhouse = { version = "0.14", features = ["time"] }
+clickhouse = { version = "0.15", features = ["time"] }
 time = "0.3"
 
 serde = { version = "1", features = ["derive"] }
