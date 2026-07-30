@@ -27,7 +27,7 @@ jobs:
       - uses: actions/checkout@v5
 
       # --- JS/TS: gate on high+ advisories in production dependencies ---
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v5
         with:
           node-version: 24
