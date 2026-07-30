@@ -34,8 +34,8 @@
     "eval:run": "pnpm --filter @tracebloom/eval-runner dev run"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.1",
-    "turbo": "2.10.0",
+    "@biomejs/biome": "2.5.5",
+    "turbo": "2.10.7",
     "typescript": "^6.0.0"
   }
 }
