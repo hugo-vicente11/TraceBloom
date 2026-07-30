@@ -1,0 +1,85 @@
+[project]
+name = "tracebloom"
+version = "0.1.0"
+description = "TraceBloom Python SDK — emits OpenTelemetry gen_ai spans for LLM and agent calls to the TraceBloom collector, with one-line auto-instrumentation for OpenAI and Anthropic."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "The TraceBloom Authors" }]
+keywords = ["opentelemetry", "llm", "observability", "gen_ai", "tracing"]
+dependencies = [
+  "opentelemetry-api>=1.43.0",
+  "opentelemetry-sdk>=1.43.0",
+  "opentelemetry-exporter-otlp-proto-http>=1.43.0",
+]
+
+# Auto-instrumentation is delegated to existing OpenTelemetry-ecosystem
+# instrumentation packages; install the extra matching the provider library or
+# agent framework you use, e.g. `pip install 'tracebloom[openai,langgraph]'`.
+# init() silently skips anything missing. langchain and langgraph share one
+# instrumentation (LangGraph executes through langchain-core callbacks).
+[project.optional-dependencies]
+openai = ["opentelemetry-instrumentation-openai-v2>=2.4b0"]
+anthropic = ["opentelemetry-instrumentation-anthropic>=0.61.0"]
+langchain = ["opentelemetry-instrumentation-langchain>=0.62.1"]
+langgraph = ["opentelemetry-instrumentation-langchain>=0.62.1"]
+llamaindex = ["openinference-instrumentation-llama-index>=4.4.3"]
+openai-agents = ["openinference-instrumentation-openai-agents>=1.6.1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tracebloom"]
+
+[dependency-groups]
+dev = [
+  "pytest>=9.1",
+  "mypy>=2.3",
+  "ruff>=0.6",
+  # Real provider libraries + their OTel instrumentation, exercised in tests
+  # against mocked HTTP transports (no network, no API keys).
+  "openai>=1.26.0",
+  "anthropic>=0.30.0",
+  "opentelemetry-instrumentation-openai-v2>=2.4b0",
+  "opentelemetry-instrumentation-anthropic>=0.61.0",
+  "httpx>=0.27.0",
+  # Real agent frameworks + their instrumentation, exercised in tests with
+  # scripted in-process models (no network, no API keys).
+  "langgraph>=1.2",
+  "langchain-core>=1.0",
+  "opentelemetry-instrumentation-langchain>=0.62.1",
+  "llama-index-core>=0.14.19",
+  "openinference-instrumentation-llama-index>=4.4.3",
+  "openai-agents>=0.18.3",
+  "openinference-instrumentation-openai-agents>=1.6.1",
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+# ../../e2e/py is the Python agent seed script — it consumes this package, so
+# it is typed and checked from here (the repo has no separate Python project).
+files = ["src", "tests", "../../e2e/py"]
+
+[[tool.mypy.overrides]]
+# The Traceloop-published langchain instrumentation ships no py.typed marker.
+module = ["opentelemetry.instrumentation.langchain"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# llama-index transitively pulls in numpy, whose current stubs use the 3.12+
+# `type X = ...` statement syntax that mypy refuses to parse when checking
+# against our 3.10 floor. numpy isn't ours to type-check; don't follow into it
+# (follow_imports_for_stubs makes the skip apply to numpy's .pyi stubs too).
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

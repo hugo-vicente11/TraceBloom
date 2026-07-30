@@ -1,0 +1,29 @@
+<clickhouse>
+  <!-- Read-only ClickHouse user for the public dashboard (DECISIONS.md D25).
+       readonly=2 permits SELECT and per-query settings but no INSERT/DDL, so
+       even a compromised dashboard process cannot write or alter telemetry.
+       The execution limits keep a hostile query pattern from starving the
+       collector's writes on a small VM. Password comes from the container
+       environment (from_env), never from a file in the repo. -->
+  <profiles>
+    <tracebloom_readonly>
+      <readonly>2</readonly>
+      <allow_ddl>0</allow_ddl>
+      <max_execution_time>15</max_execution_time>
+      <max_memory_usage>1000000000</max_memory_usage>
+      <max_rows_to_read>200000000</max_rows_to_read>
+      <max_result_rows>1000000</max_result_rows>
+      <max_result_bytes>200000000</max_result_bytes>
+    </tracebloom_readonly>
+  </profiles>
+  <users>
+    <tracebloom_ro>
+      <password from_env="CLICKHOUSE_RO_PASSWORD"/>
+      <networks>
+        <ip>::/0</ip>
+      </networks>
+      <profile>tracebloom_readonly</profile>
+      <quota>default</quota>
+    </tracebloom_ro>
+  </users>
+</clickhouse>

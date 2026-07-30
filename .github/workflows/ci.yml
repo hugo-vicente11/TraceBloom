@@ -1,0 +1,389 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: CI only ever reads the repository. On a public repo this
+# also bounds what a compromised third-party action could do with the token.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # JS/TS packages: lint (Biome), type-check, test, build (via Turborepo).
+  web:
+    name: web (lint / typecheck / test / build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint (Biome)
+        run: pnpm lint
+
+      - name: Type-check
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  # Rust collector: format, clippy, unit + ClickHouse integration test, build.
+  collector:
+    name: collector (fmt / clippy / test / build)
+    runs-on: ubuntu-latest
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.3
+        env:
+          # 26.3+ disables network access for 'default' unless credentials are set.
+          # Setting DEFAULT_ACCESS_MANAGEMENT=1 makes the entrypoint create the
+          # default user with unrestricted network access and no password.
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+          CLICKHOUSE_DB: tracebloom
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 24
+    env:
+      CLICKHOUSE_URL: http://localhost:8123
+      TRACEBLOOM_TEST_CLICKHOUSE_URL: http://localhost:8123
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Apply ClickHouse migrations
+        run: ./infra/clickhouse/migrate.sh
+
+      - name: Test (unit + ClickHouse integration)
+        run: cargo test --all-targets
+
+      - name: Build (release)
+        run: cargo build --release -p tracebloom-collector
+
+  # Python SDK: unit tests (span shape, cost/pricing parity, content toggle,
+  # auto-instrumentation), strict mypy, ruff: plus the SDK -> collector ->
+  # ClickHouse integration test against a real collector binary.
+  python:
+    name: python (test / mypy / ruff / integration)
+    runs-on: ubuntu-latest
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.3
+        env:
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+          CLICKHOUSE_DB: tracebloom
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 24
+    env:
+      CLICKHOUSE_URL: http://localhost:8123
+    defaults:
+      run:
+        working-directory: packages/sdk-py
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.28"
+          python-version: "3.14"
+
+      - run: uv sync --frozen
+
+      - name: Type-check (mypy strict)
+        run: uv run mypy
+
+      - name: Lint (ruff)
+        run: uv run ruff check
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Apply ClickHouse migrations
+        working-directory: .
+        run: ./infra/clickhouse/migrate.sh
+
+      - name: Build collector
+        working-directory: .
+        run: cargo build --release -p tracebloom-collector
+
+      - name: Start collector
+        working-directory: .
+        run: |
+          ./target/release/tracebloom-collector &
+          for i in $(seq 1 40); do
+            curl -fsS http://localhost:4318/health && exit 0
+            sleep 0.5
+          done
+          echo "collector did not become healthy" >&2
+          exit 1
+
+      - name: Test (unit + integration)
+        run: uv run pytest -q
+        env:
+          TRACEBLOOM_TEST_COLLECTOR_URL: http://localhost:4318
+          TRACEBLOOM_TEST_CLICKHOUSE_URL: http://localhost:8123
+
+  # Evaluation engine + trace query API: integration tests against real
+  # ClickHouse + Postgres (runner: result written, idempotency, regression
+  # detection; dashboard: seeded trace -> spans payload, tree, lazy content).
+  evals:
+    name: evals + trace API (integration)
+    runs-on: ubuntu-latest
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.3
+        env:
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+          CLICKHOUSE_DB: tracebloom
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 24
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: tracebloom
+          POSTGRES_PASSWORD: tracebloom
+          POSTGRES_DB: tracebloom
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tracebloom -d tracebloom"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 24
+    env:
+      CLICKHOUSE_URL: http://localhost:8123
+      TRACEBLOOM_TEST_CLICKHOUSE_URL: http://localhost:8123
+      DATABASE_URL: postgres://tracebloom:tracebloom@localhost:5432/tracebloom
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Apply ClickHouse migrations
+        run: ./infra/clickhouse/migrate.sh
+
+      - name: Apply Postgres migrations
+        run: pnpm --filter @tracebloom/db db:migrate
+
+      - name: Build eval-runner and its workspace deps
+        # Use turbo (not `pnpm --filter "...pkg"`, which does not build
+        # dependencies here) so db/eval/sdk are built before eval-runner, whose
+        # dist the vitest suite imports.
+        run: pnpm exec turbo run build --filter=@tracebloom/eval-runner
+
+      - name: Runner integration + regression tests
+        run: pnpm --filter @tracebloom/eval-runner test
+
+      - name: Dashboard trace-query integration tests
+        # The dashboard suite is self-contained (no workspace dist imports);
+        # its integration file activates because TRACEBLOOM_TEST_CLICKHOUSE_URL
+        # is set at the job level, and self-skips elsewhere (e.g. the web job).
+        run: pnpm --filter @tracebloom/dashboard test
+
+  # Full loop: mock provider -> SDK -> collector -> ClickHouse -> dashboard query.
+  e2e:
+    name: e2e smoke (SDK -> collector -> ClickHouse)
+    runs-on: ubuntu-latest
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.3
+        env:
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+          CLICKHOUSE_DB: tracebloom
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 24
+    env:
+      CLICKHOUSE_URL: http://localhost:8123
+      CLICKHOUSE_DATABASE: tracebloom
+      TRACEBLOOM_ENDPOINT: http://localhost:4318
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95.0"
+      - uses: Swatinem/rust-cache@v2
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build SDK (imported by the smoke test)
+        run: pnpm --filter @tracebloom/sdk build
+
+      - name: Build collector
+        run: cargo build --release -p tracebloom-collector
+
+      - name: Apply ClickHouse migrations
+        run: ./infra/clickhouse/migrate.sh
+
+      - name: Start collector
+        run: |
+          ./target/release/tracebloom-collector &
+          echo "COLLECTOR_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4318/health >/dev/null; then
+              echo "collector healthy after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "collector did not become healthy" >&2; exit 1
+
+      - name: Run smoke test
+        run: pnpm smoke
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.28"
+          python-version: "3.14"
+
+      - name: Seed Python agent trace (multi-step, mocked provider)
+        run: |
+          uv sync --frozen --project packages/sdk-py
+          pnpm seed:agent:py
+
+      - name: Stop collector
+        if: always()
+        run: kill "${COLLECTOR_PID}" 2>/dev/null || true
+
+  # Production deploy path: build the three prod images, boot the full stack
+  # from empty volumes, seed the demo, verify the corpus + runner-detected
+  # regression, and assert the public guardrails (read-only at the database
+  # layer, bounded + rate-limited try-it sandbox).
+  deploy:
+    name: deploy (images / prod stack / seed / guardrails)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build collector image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/collector/Dockerfile
+          tags: tracebloom-collector:local
+          load: true
+          cache-from: type=gha,scope=collector
+          cache-to: type=gha,mode=max,scope=collector
+
+      - name: Build dashboard image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/dashboard/Dockerfile
+          tags: tracebloom-dashboard:local
+          load: true
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,mode=max,scope=dashboard
+
+      - name: Build worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/eval-runner/Dockerfile
+          tags: tracebloom-worker:local
+          load: true
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker
+
+      - name: Boot the production stack (fresh volumes)
+        run: |
+          cat > infra/prod/.env <<'ENV'
+          DEMO_DOMAIN=
+          POSTGRES_PASSWORD=ci-pg-admin
+          CLICKHOUSE_PASSWORD=ci-ch-admin
+          POSTGRES_RO_PASSWORD=ci-pg-ro
+          CLICKHOUSE_RO_PASSWORD=ci-ch-ro
+          TRACEBLOOM_SANDBOX_SCALE=0.15
+          ENV
+          docker compose --env-file infra/prod/.env -f infra/prod/docker-compose.prod.yml up -d
+          for i in $(seq 1 90); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' tracebloom-prod-dashboard 2>/dev/null || echo starting)
+            if [ "$status" = "healthy" ]; then echo "dashboard healthy after ${i} checks"; exit 0; fi
+            sleep 2
+          done
+          echo "dashboard did not become healthy" >&2
+          docker compose --env-file infra/prod/.env -f infra/prod/docker-compose.prod.yml ps >&2
+          exit 1
+
+      - name: Seed the demo project
+        run: docker compose --env-file infra/prod/.env -f infra/prod/docker-compose.prod.yml run --rm demo-seed
+
+      - name: Verify seed + runner-detected regression
+        run: |
+          docker compose --env-file infra/prod/.env -f infra/prod/docker-compose.prod.yml \
+            run --rm demo-seed node apps/demo/dist/main.js verify --timeout 120
+
+      - name: Guardrail smoke (read-only public path, bounded try-it)
+        run: infra/prod/smoke.sh
+
+      - name: Stack logs
+        if: failure()
+        run: docker compose --env-file infra/prod/.env -f infra/prod/docker-compose.prod.yml logs --tail 120
+
+      - name: Tear down
+        if: always()
+        run: docker compose --env-file infra/prod/.env -f infra/prod/docker-compose.prod.yml down -v

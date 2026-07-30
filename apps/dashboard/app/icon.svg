@@ -1,0 +1,7 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="TraceBloom">
+  <rect x="2" y="2" width="28" height="28" rx="7" fill="#0f172a"/>
+  <!-- Waterfall bars in the trace-viewer's category colors (llm / agent / tool). -->
+  <rect x="8" y="9" width="14" height="3.6" rx="1.8" fill="#2a78d6"/>
+  <rect x="11" y="14.2" width="12" height="3.6" rx="1.8" fill="#10b981"/>
+  <rect x="8.5" y="19.4" width="8" height="3.6" rx="1.8" fill="#f59e0b"/>
+</svg>

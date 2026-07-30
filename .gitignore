@@ -1,0 +1,49 @@
+# Rust
+/target
+**/target
+Cargo.lock.bak
+
+# Node / TS
+node_modules/
+.next/
+dist/
+out/
+.turbo/
+*.tsbuildinfo
+.eslintcache
+# Next.js generates this (and imports generated route types); never commit it
+next-env.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+# Credential material — belt-and-braces so a stray key can never be committed.
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+credentials.*
+.npmrc
+.pypirc
+
+# Local agent/editor settings (may contain machine-specific paths)
+.claude/settings.local.json
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ClickHouse / Postgres local volumes
+.data/

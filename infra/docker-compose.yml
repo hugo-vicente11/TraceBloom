@@ -1,0 +1,66 @@
+name: tracebloom
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3
+    container_name: tracebloom-clickhouse
+    environment:
+      # CLICKHOUSE_DB lets the entrypoint create the database on first boot.
+      CLICKHOUSE_DB: tracebloom
+    ports:
+      - "8123:8123" # HTTP interface (OTLP writes, dashboard reads)
+      - "9000:9000" # native protocol
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      # Migrations double as first-boot init scripts (idempotent CREATE ... IF NOT EXISTS).
+      - ./clickhouse/migrations:/docker-entrypoint-initdb.d:ro
+      - clickhouse-data:/var/lib/clickhouse
+      # ClickHouse 26.3+ disables network access for 'default' when no credentials
+      # are set. This override (loaded after default-user.xml alphabetically) re-opens
+      # ::0/0 for the default user so all local-dev clients work without a password.
+      - ./clickhouse/users.xml:/etc/clickhouse-server/users.d/z-default-network.xml:ro
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: tracebloom-postgres
+    environment:
+      POSTGRES_USER: tracebloom
+      POSTGRES_PASSWORD: tracebloom
+      POSTGRES_DB: tracebloom
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tracebloom -d tracebloom"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+  collector:
+    build:
+      context: ..
+      dockerfile: apps/collector/Dockerfile
+    container_name: tracebloom-collector
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      TRACEBLOOM_BIND_ADDR: 0.0.0.0:4318
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: tracebloom
+      RUST_LOG: info
+    ports:
+      - "4318:4318" # OTLP/HTTP
+
+volumes:
+  clickhouse-data:
+  postgres-data:

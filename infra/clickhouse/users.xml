@@ -1,0 +1,12 @@
+<clickhouse>
+  <!-- Allow the default user to connect from any IP with no password.
+       Loaded after the entrypoint's auto-generated default-user.xml
+       (alphabetical order: u > d) so it wins the merge. -->
+  <users>
+    <default>
+      <networks replace="1">
+        <ip>::/0</ip>
+      </networks>
+    </default>
+  </users>
+</clickhouse>

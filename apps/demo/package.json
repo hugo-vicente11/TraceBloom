@@ -1,0 +1,30 @@
+{
+  "name": "@tracebloom/demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TraceBloom demo project lifecycle: idempotent seed of the curated demo corpus, reset to a clean seeded state, and CI verification.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "tracebloom-demo": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "dev": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@clickhouse/client": "^1.22.0",
+    "@tracebloom/db": "workspace:*",
+    "@tracebloom/eval": "workspace:*",
+    "@tracebloom/sdk": "workspace:*",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^6.0.0",
+    "vitest": "^4.1.9"
+  }
+}
