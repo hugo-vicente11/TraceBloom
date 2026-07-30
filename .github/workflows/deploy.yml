@@ -1,0 +1,108 @@
+# Continuous deploy of the public demo: OPT-IN.
+#
+# Does nothing until the repository variable DEMO_DEPLOY_ENABLED is set to
+# 'true' and these secrets exist: DEMO_SSH_HOST, DEMO_SSH_USER, DEMO_SSH_KEY
+# (an ssh key authorized on the demo VM). The VM must have the repo cloned at
+# ~/tracebloom with infra/prod/.env configured for pull mode:
+#   TRACEBLOOM_IMAGE_PREFIX=ghcr.io/<owner>/tracebloom
+#   TRACEBLOOM_IMAGE_TAG=latest
+# (and `docker login ghcr.io` on the VM if the packages are private).
+# See docs/self-hosting.md.
+
+name: Deploy demo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-demo
+  cancel-in-progress: false
+
+# Least privilege by default; the image-push job widens this to packages: write.
+permissions:
+  contents: read
+
+jobs:
+  push-images:
+    name: push images to GHCR
+    if: vars.DEMO_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push collector
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/collector/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/tracebloom-collector:latest
+            ghcr.io/${{ github.repository_owner }}/tracebloom-collector:${{ github.sha }}
+          cache-from: type=gha,scope=collector
+          cache-to: type=gha,mode=max,scope=collector
+
+      - name: Build and push dashboard
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/dashboard/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/tracebloom-dashboard:latest
+            ghcr.io/${{ github.repository_owner }}/tracebloom-dashboard:${{ github.sha }}
+          cache-from: type=gha,scope=dashboard
+          cache-to: type=gha,mode=max,scope=dashboard
+
+      - name: Build and push worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/eval-runner/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/tracebloom-worker:latest
+            ghcr.io/${{ github.repository_owner }}/tracebloom-worker:${{ github.sha }}
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker
+
+  deploy:
+    name: deploy to the demo VM
+    needs: push-images
+    if: vars.DEMO_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Pull new images and restart the stack over SSH
+        # Secrets are passed through the environment rather than interpolated
+        # into the script body: `${{ }}` expansion would place the private key
+        # in the rendered shell source (and mangle a multi-line key).
+        env:
+          DEMO_SSH_KEY: ${{ secrets.DEMO_SSH_KEY }}
+          DEMO_SSH_USER: ${{ secrets.DEMO_SSH_USER }}
+          DEMO_SSH_HOST: ${{ secrets.DEMO_SSH_HOST }}
+        run: |
+          install -m 600 -D /dev/null ~/.ssh/demo_key
+          printf '%s\n' "$DEMO_SSH_KEY" > ~/.ssh/demo_key
+          ssh -i ~/.ssh/demo_key -o StrictHostKeyChecking=accept-new \
+            "${DEMO_SSH_USER}@${DEMO_SSH_HOST}" bash -s <<'SCRIPT'
+          set -euo pipefail
+          cd ~/tracebloom
+          git fetch origin main
+          git reset --hard origin/main
+          ./infra/prod/deploy.sh up
+          SCRIPT

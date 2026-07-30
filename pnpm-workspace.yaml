@@ -1,0 +1,30 @@
+packages:
+  - "apps/dashboard"
+  - "apps/demo"
+  - "apps/eval-runner"
+  - "packages/sdk-ts"
+  - "packages/eval"
+  - "packages/db"
+  - "e2e"
+  - "examples"
+
+# pnpm 11 blocks dependency build scripts by default (supply-chain safety).
+# esbuild (used by drizzle-kit, tsx and vite) needs its install script to fetch
+# its native binary; it is ubiquitous and trusted, so we allow it explicitly.
+allowBuilds:
+  esbuild: true
+  sharp: true
+
+# Force-patch transitive dependencies with published advisories to their fixed
+# versions (pnpm audit; see SECURITY.md). All three are pulled in transitively:
+#   postcss  — via next (CSS pipeline) and tailwind/vite
+#   fast-uri — via ajv (the eval engine's json_schema evaluator)
+#   sharp    — via next's optional image optimizer (unused: no next/image here)
+overrides:
+  "postcss@<8.5.18": ">=8.5.18"
+  "fast-uri@<3.1.4": ">=3.1.4"
+  "sharp@<0.35.0": ">=0.35.0"
+  # esbuild dev-server SSRF (dev-only, GHSA-67mh-4wv8-2f99). Reaches us only via
+  # drizzle-kit's deprecated @esbuild-kit/* loader, used solely to load the TS
+  # migration config locally. Scoped so vite/drizzle-kit's own esbuild is untouched.
+  "@esbuild-kit/core-utils>esbuild": ">=0.25.0"

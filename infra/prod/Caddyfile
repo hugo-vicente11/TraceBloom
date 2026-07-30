@@ -1,0 +1,39 @@
+# TraceBloom demo — the only publicly exposed service.
+#
+# SITE_ADDRESS is computed by docker-compose from DEMO_DOMAIN:
+#   unset/empty DEMO_DOMAIN → ":80"       (plain HTTP: IP-only VM, CI smoke)
+#   DEMO_DOMAIN=demo.example.com → automatic HTTPS via Let's Encrypt.
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# The whole public surface is GET pages + two small POST endpoints; there
+	# is no reason to accept large bodies.
+	request_body {
+		max_size 100KB
+	}
+
+	header {
+		# HSTS: only processed by browsers over HTTPS (ignored over plain HTTP,
+		# so it is safe to send unconditionally on the IP-only / CI :80 path).
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+		# The dashboard renders user-controlled trace content, but only as escaped
+		# React text (no dangerouslySetInnerHTML), so the primary defense is output
+		# encoding. This CSP is defense in depth: it blocks external script origins,
+		# plugins, framing (clickjacking), base-tag and form-action hijacking.
+		# 'unsafe-inline' script remains because Next injects inline bootstrap
+		# scripts; a nonce-based strict CSP is the documented follow-up (SECURITY.md).
+		# No upgrade-insecure-requests so the HTTP-only demo path keeps working.
+		Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; frame-src 'none'; form-action 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; worker-src 'self' blob:"
+		-Server
+	}
+
+	reverse_proxy dashboard:3000 {
+		# Never buffer responses: the live trace stream is SSE.
+		flush_interval -1
+	}
+}

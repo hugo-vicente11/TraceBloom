@@ -1,0 +1,85 @@
+{
+  "$comment": "Cross-SDK cost-parity cases: both the TS and Python SDKs must produce EXACTLY these numbers (same IEEE-754 ops) for the canonical pricing map. Regenerate via scripts/sync-pricing notes if the map changes.",
+  "cases": [
+    {
+      "model": "gpt-4o",
+      "input_tokens": 1000,
+      "output_tokens": 500,
+      "expected": {
+        "input_usd": 0.0025,
+        "output_usd": 0.005,
+        "total_usd": 0.0075
+      }
+    },
+    {
+      "model": "gpt-4o-2024-08-06",
+      "input_tokens": 138,
+      "output_tokens": 61,
+      "expected": {
+        "input_usd": 0.000345,
+        "output_usd": 0.00061,
+        "total_usd": 0.0009549999999999999
+      }
+    },
+    {
+      "model": "gpt-4.1-mini-2025-04-14",
+      "input_tokens": 250000,
+      "output_tokens": 12345,
+      "expected": {
+        "input_usd": 0.1,
+        "output_usd": 0.019752000000000002,
+        "total_usd": 0.11975200000000001
+      }
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "input_tokens": 123456,
+      "output_tokens": 7890,
+      "expected": {
+        "input_usd": 0.370368,
+        "output_usd": 0.11835,
+        "total_usd": 0.488718
+      }
+    },
+    {
+      "model": "claude-opus-4-8-20260115",
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "expected": {
+        "input_usd": 0.0000049999999999999996,
+        "output_usd": 0.000024999999999999998,
+        "total_usd": 0.000029999999999999997
+      }
+    },
+    {
+      "model": "o3",
+      "input_tokens": 1000000,
+      "output_tokens": 1000000,
+      "expected": {
+        "input_usd": 2,
+        "output_usd": 8,
+        "total_usd": 10
+      }
+    },
+    {
+      "model": "gemini-2.5-flash",
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "expected": {
+        "input_usd": 0,
+        "output_usd": 0,
+        "total_usd": 0
+      }
+    },
+    {
+      "model": "totally-unknown-model",
+      "input_tokens": 5000,
+      "output_tokens": 5000,
+      "expected": {
+        "input_usd": 0,
+        "output_usd": 0,
+        "total_usd": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@tracebloom/examples",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Runnable TraceBloom framework-integration examples (see README.md).",
+  "scripts": {
+    "vercel": "tsx vercel_researcher.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tracebloom/sdk": "workspace:*",
+    "ai": "^7.0.31",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^6.0.0"
+  }
+}

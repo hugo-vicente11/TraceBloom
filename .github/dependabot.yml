@@ -1,0 +1,33 @@
+# Automated dependency updates. Minor/patch bumps are grouped into a single
+# weekly PR per ecosystem to keep review noise down; majors open on their own.
+version: 2
+updates:
+  - package-ecosystem: "npm" # pnpm workspace (root lockfile)
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      js-minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "cargo" # Rust collector
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      cargo-minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "uv" # Python SDK (pyproject.toml + uv.lock)
+    directory: "/packages/sdk-py"
+    schedule:
+      interval: "weekly"
+    groups:
+      py-minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

@@ -1,0 +1,19 @@
+# Cargo workspace for the Rust hot-path components.
+# Only the collector lives here today; future native components (e.g. an
+# OTLP/gRPC ingest path) become additional members.
+[workspace]
+resolver = "3"
+members = ["apps/collector"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+repository = "https://github.com/tracebloom/tracebloom"
+
+# Release profile tuned for the collector: thin LTO keeps build times sane while
+# still letting the optimizer inline across the decode/convert/write hot path.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

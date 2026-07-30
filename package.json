@@ -1,0 +1,41 @@
+{
+  "name": "tracebloom",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Open-source, vendor-neutral observability and evaluation layer for LLM and agent applications.",
+  "license": "Apache-2.0",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "collector:build": "cargo build --release -p tracebloom-collector",
+    "collector:test": "cargo test -p tracebloom-collector",
+    "collector:lint": "cargo clippy -p tracebloom-collector --all-targets -- -D warnings",
+    "stack:up": "docker compose -f infra/docker-compose.yml up -d --build",
+    "stack:down": "docker compose -f infra/docker-compose.yml down",
+    "stack:logs": "docker compose -f infra/docker-compose.yml logs -f",
+    "ch:migrate": "infra/clickhouse/migrate.sh",
+    "pricing:sync": "node scripts/sync-pricing.mjs",
+    "db:migrate": "pnpm --filter @tracebloom/db db:migrate",
+    "smoke": "pnpm --filter @tracebloom/e2e smoke",
+    "seed:agent": "pnpm --filter @tracebloom/e2e seed:agent",
+    "seed:agent:live": "pnpm --filter @tracebloom/e2e seed:agent:live",
+    "seed:agent:py": "uv run --project packages/sdk-py python e2e/py/seed_agent.py",
+    "demo:seed": "pnpm --filter @tracebloom/demo dev seed",
+    "demo:reset": "pnpm --filter @tracebloom/demo dev reset",
+    "demo:verify": "pnpm --filter @tracebloom/demo dev verify",
+    "eval:seed": "pnpm --filter @tracebloom/eval-runner dev seed",
+    "eval:run": "pnpm --filter @tracebloom/eval-runner dev run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.1",
+    "turbo": "2.10.0",
+    "typescript": "^6.0.0"
+  }
+}

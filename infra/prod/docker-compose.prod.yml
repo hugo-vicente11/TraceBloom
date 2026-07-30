@@ -1,0 +1,225 @@
+# TraceBloom production stack: one small VM, one command (see deploy.sh).
+#
+# Public surface = Caddy only (80/443 → dashboard). The collector, ClickHouse
+# and Postgres publish NO host ports: nothing outside the compose network can
+# inject spans or reach a database. The dashboard runs in public-demo mode with
+# read-only database credentials; read-write credentials exist only inside the
+# internal services (collector, eval-runner, migrate). See DECISIONS.md D24/D25.
+#
+# Requires an .env next to this file (deploy.sh generates one with random
+# passwords on first run; see .env.example).
+
+name: tracebloom-prod
+
+services:
+  caddy:
+    image: caddy:2.11.4-alpine
+    container_name: tracebloom-prod-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Empty/unset DEMO_DOMAIN → plain HTTP on :80; a hostname → auto-HTTPS.
+      # (`:-` treats empty-but-set like unset, matching the generated .env.)
+      #
+      # CADDY_SITE_ADDRESS overrides this. Set it to ":80" when TLS terminates
+      # in front of the VM (Cloudflare Tunnel or any proxied CDN): DEMO_DOMAIN
+      # still drives the app's public URLs, but Caddy must not attempt ACME,
+      # which would fail with no inbound 80/443 reaching this host.
+      SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-${DEMO_DOMAIN:-:80}}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    mem_limit: 256m
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3
+    container_name: tracebloom-prod-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: tracebloom
+      # First boot: the entrypoint creates `default` with this password and
+      # network access. Read-write; used only by internal services.
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set in .env}
+      # Read-only user for the dashboard, declared in clickhouse-users.xml
+      # (which reads this env var via from_env).
+      CLICKHOUSE_RO_PASSWORD: ${CLICKHOUSE_RO_PASSWORD:?set in .env}
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - ../clickhouse/migrations:/docker-entrypoint-initdb.d:ro
+      - ./clickhouse-users.xml:/etc/clickhouse-server/users.d/z-tracebloom-users.xml:ro
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      # Probe via the container's network IP, not loopback: during first-boot
+      # init the entrypoint runs a TEMPORARY server bound to 127.0.0.1 only —
+      # a loopback probe would report healthy before the real server listens.
+      test:
+        [
+          "CMD-SHELL",
+          "clickhouse-client --host \"$$(hostname -i | cut -d' ' -f1)\" --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1'",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    mem_limit: 2g
+
+  postgres:
+    image: postgres:18-alpine
+    container_name: tracebloom-prod-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tracebloom
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: tracebloom
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tracebloom -d tracebloom"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+    mem_limit: 512m
+
+  collector:
+    image: ${TRACEBLOOM_IMAGE_PREFIX:-tracebloom}-collector:${TRACEBLOOM_IMAGE_TAG:-local}
+    build:
+      context: ../..
+      dockerfile: apps/collector/Dockerfile
+    container_name: tracebloom-prod-collector
+    restart: unless-stopped
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      TRACEBLOOM_BIND_ADDR: 0.0.0.0:4318
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: tracebloom
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      RUST_LOG: info
+    # No published ports: OTLP ingest is reachable only from inside the
+    # network (dashboard sandbox runs, eval-runner judge spans).
+    mem_limit: 256m
+
+  # One-shot: Postgres migrations + read-only role + ClickHouse migrations.
+  # Everything that depends on schema or roles waits for this to succeed.
+  migrate:
+    image: ${TRACEBLOOM_IMAGE_PREFIX:-tracebloom}-worker:${TRACEBLOOM_IMAGE_TAG:-local}
+    build:
+      context: ../..
+      dockerfile: apps/eval-runner/Dockerfile
+    container_name: tracebloom-prod-migrate
+    restart: "no"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://tracebloom:${POSTGRES_PASSWORD}@postgres:5432/tracebloom
+      TRACEBLOOM_PG_RO_PASSWORD: ${POSTGRES_RO_PASSWORD:?set in .env}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+    command:
+      - node
+      - --eval
+      - |
+        const { execFileSync } = require('node:child_process');
+        for (const script of [
+          'packages/db/dist/migrate.js',
+          'packages/db/dist/setup-readonly-role.js',
+          'infra/clickhouse/apply-migrations.mjs',
+        ]) {
+          console.log('[migrate] ' + script);
+          execFileSync('node', [script], { stdio: 'inherit' });
+        }
+
+  eval-runner:
+    image: ${TRACEBLOOM_IMAGE_PREFIX:-tracebloom}-worker:${TRACEBLOOM_IMAGE_TAG:-local}
+    container_name: tracebloom-prod-eval-runner
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      collector:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://tracebloom:${POSTGRES_PASSWORD}@postgres:5432/tracebloom
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      TRACEBLOOM_ENDPOINT: http://collector:4318
+      # Judge API key stays server-side and optional: unset (the default) means
+      # llm_judge evals are skipped and deterministic evals still run.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TRACEBLOOM_EVAL_INTERVAL_MS: "15000"
+    mem_limit: 512m
+
+  # One-shot, run explicitly (never on `up`):
+  #   docker compose run --rm demo-seed                                  # seed
+  #   docker compose run --rm demo-seed node apps/demo/dist/main.js reset
+  #   docker compose run --rm demo-seed node apps/demo/dist/main.js verify
+  demo-seed:
+    image: ${TRACEBLOOM_IMAGE_PREFIX:-tracebloom}-worker:${TRACEBLOOM_IMAGE_TAG:-local}
+    profiles: ["ops"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      collector:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://tracebloom:${POSTGRES_PASSWORD}@postgres:5432/tracebloom
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      # The hero trace goes through the real collector, like any app.
+      TRACEBLOOM_ENDPOINT: http://collector:4318
+      TRACEBLOOM_DASHBOARD_URL: ${DEMO_DOMAIN:+https://${DEMO_DOMAIN}}
+    command: ["node", "apps/demo/dist/main.js", "seed"]
+
+  dashboard:
+    image: ${TRACEBLOOM_IMAGE_PREFIX:-tracebloom}-dashboard:${TRACEBLOOM_IMAGE_TAG:-local}
+    build:
+      context: ../..
+      dockerfile: apps/dashboard/Dockerfile
+      args:
+        # Bake the canonical origin for link previews when a domain is set;
+        # empty (IP-only VM / CI) falls back to the app's compiled-in default.
+        NEXT_PUBLIC_SITE_URL: ${DEMO_DOMAIN:+https://${DEMO_DOMAIN}}
+    container_name: tracebloom-prod-dashboard
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      collector:
+        condition: service_healthy
+    environment:
+      # Read-only credentials: the public dashboard cannot write either store
+      # even if application code misbehaves (DECISIONS.md D25).
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: tracebloom
+      CLICKHOUSE_USER: tracebloom_ro
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_RO_PASSWORD}
+      DATABASE_URL: postgres://tracebloom_ro:${POSTGRES_RO_PASSWORD}@postgres:5432/tracebloom
+      # Public demo mode: mutating server actions refuse, config UIs render
+      # read-only, the try-it sandbox is enabled.
+      TRACEBLOOM_PUBLIC_DEMO: "1"
+      # The sandbox agent exports through the internal collector; low batch
+      # delay so live spans appear ~immediately.
+      TRACEBLOOM_ENDPOINT: http://collector:4318
+      OTEL_BSP_SCHEDULE_DELAY: "200"
+      # Pace multiplier for sandbox runs (CI smoke uses a small value so a
+      # full run completes in seconds; the public demo keeps 1).
+      TRACEBLOOM_SANDBOX_SCALE: ${TRACEBLOOM_SANDBOX_SCALE:-1}
+    mem_limit: 768m
+
+volumes:
+  clickhouse-data:
+  postgres-data:
+  caddy-data:
+  caddy-config:

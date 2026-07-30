@@ -1,0 +1,16 @@
+# Keep the Docker build context small and reproducible.
+**/target
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+.git
+.github
+**/*.tsbuildinfo
+.data
+.claude
+.env
+**/.env
+packages/sdk-py/.venv
+**/__pycache__
+docs
