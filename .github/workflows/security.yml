@@ -24,7 +24,7 @@ jobs:
     name: dependency audit (pnpm / cargo / pip)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # --- JS/TS: gate on high+ advisories in production dependencies ---
       - uses: pnpm/action-setup@v4
