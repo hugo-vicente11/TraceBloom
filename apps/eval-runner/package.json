@@ -21,7 +21,7 @@
     "@tracebloom/eval": "workspace:*",
     "@tracebloom/sdk": "workspace:*",
     "drizzle-orm": "^0.45.2",
-    "openai": "^6.45.0"
+    "openai": "^7.3.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
